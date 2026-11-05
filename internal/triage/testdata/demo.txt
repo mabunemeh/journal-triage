@@ -1,0 +1,5 @@
+Journal triage: 5 matched / 6 records; 1 filtered; 0 skipped
+Groups: 3 total; showing 3
+CRIT        1x "kernel" "Synthetic storage failure"
+ERR         3x "api-demo.service" "Database connection timed out"
+WARNING     1x "worker-demo.service" "Job queue is growing"

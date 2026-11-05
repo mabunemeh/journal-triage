@@ -1,0 +1,6 @@
+{"_SYSTEMD_UNIT":"api-demo.service","PRIORITY":"3","MESSAGE":"Database connection timed out"}
+{"_SYSTEMD_UNIT":"api-demo.service","PRIORITY":"3","MESSAGE":"Database connection timed out"}
+{"_SYSTEMD_UNIT":"worker-demo.service","PRIORITY":"4","MESSAGE":"Job queue is growing"}
+{"_SYSTEMD_UNIT":"api-demo.service","PRIORITY":"3","MESSAGE":"Database connection timed out"}
+{"SYSLOG_IDENTIFIER":"kernel","PRIORITY":"2","MESSAGE":"Synthetic storage failure"}
+{"_SYSTEMD_UNIT":"api-demo.service","PRIORITY":"6","MESSAGE":"Request completed"}

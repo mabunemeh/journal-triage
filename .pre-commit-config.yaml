@@ -1,0 +1,34 @@
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+      - id: gitleaks
+        alias: gitleaks-history
+        name: Detect secrets in committed history
+        entry: gitleaks git --redact --verbose --log-opts=--all
+        stages: [manual]
+        always_run: true
+
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt
+        language: system
+        entry: bash -c 'out=$(gofmt -l cmd internal); if [ -n "$out" ]; then echo "$out"; exit 1; fi'
+        types: [go]
+        pass_filenames: false
+      - id: go-vet
+        name: go vet
+        language: system
+        entry: go vet ./...
+        types: [go]
+        pass_filenames: false
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files

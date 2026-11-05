@@ -1,0 +1,6 @@
+*.exe
+coverage.out
+dist/
+.env
+logs/
+.test-tmp/
