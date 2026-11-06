@@ -38,23 +38,32 @@ func TestDemo(t *testing.T) {
 
 func TestPriorityAndMessageFields(t *testing.T) {
 	tests := []struct {
-		name, input                          string
-		matched, filtered, priority, message int
+		name, input                                  string
+		matched, filtered, priority, message, binary int
 	}{
-		{"integer", `{"PRIORITY":0,"MESSAGE":""}`, 1, 0, 0, 0},
-		{"string", `{"PRIORITY":"4","MESSAGE":"warning"}`, 1, 0, 0, 0},
-		{"filtered before message", `{"PRIORITY":"5","MESSAGE":null}`, 0, 1, 0, 0},
-		{"no priority", `{"MESSAGE":"hello"}`, 0, 0, 1, 0},
-		{"null priority", `{"PRIORITY":null,"MESSAGE":"hello"}`, 0, 0, 1, 0},
-		{"bool priority", `{"PRIORITY":true,"MESSAGE":"hello"}`, 0, 0, 1, 0},
-		{"float priority", `{"PRIORITY":3.5,"MESSAGE":"hello"}`, 0, 0, 1, 0},
-		{"out of range", `{"PRIORITY":"8","MESSAGE":"hello"}`, 0, 0, 1, 0},
-		{"negative", `{"PRIORITY":-1,"MESSAGE":"hello"}`, 0, 0, 1, 0},
-		{"multiple priorities", `{"PRIORITY":["3","4"],"MESSAGE":"hello"}`, 0, 0, 1, 0},
-		{"no message", `{"PRIORITY":"3"}`, 0, 0, 0, 1},
-		{"null message", `{"PRIORITY":"3","MESSAGE":null}`, 0, 0, 0, 1},
-		{"binary message", `{"PRIORITY":"3","MESSAGE":[104,105]}`, 0, 0, 0, 1},
-		{"multiple messages", `{"PRIORITY":"3","MESSAGE":["a","b"]}`, 0, 0, 0, 1},
+		{"integer", `{"PRIORITY":0,"MESSAGE":""}`, 1, 0, 0, 0, 0},
+		{"string", `{"PRIORITY":"4","MESSAGE":"warning"}`, 1, 0, 0, 0, 0},
+		{"filtered before message", `{"PRIORITY":"5","MESSAGE":null}`, 0, 1, 0, 0, 0},
+		{"no priority", `{"MESSAGE":"hello"}`, 0, 0, 1, 0, 0},
+		{"null priority", `{"PRIORITY":null,"MESSAGE":"hello"}`, 0, 0, 1, 0, 0},
+		{"bool priority", `{"PRIORITY":true,"MESSAGE":"hello"}`, 0, 0, 1, 0, 0},
+		{"float priority", `{"PRIORITY":3.5,"MESSAGE":"hello"}`, 0, 0, 1, 0, 0},
+		{"out of range", `{"PRIORITY":"8","MESSAGE":"hello"}`, 0, 0, 1, 0, 0},
+		{"negative", `{"PRIORITY":-1,"MESSAGE":"hello"}`, 0, 0, 1, 0, 0},
+		{"multiple priorities", `{"PRIORITY":["3","4"],"MESSAGE":"hello"}`, 0, 0, 1, 0, 0},
+		{"no message", `{"PRIORITY":"3"}`, 0, 0, 0, 1, 0},
+		{"null message", `{"PRIORITY":"3","MESSAGE":null}`, 0, 0, 0, 1, 0},
+		{"binary message", `{"PRIORITY":"3","MESSAGE":[104,105]}`, 1, 0, 0, 0, 1},
+		{"binary invalid UTF-8", `{"PRIORITY":"3","MESSAGE":[255,9]}`, 1, 0, 0, 0, 1},
+		{"empty byte array", `{"PRIORITY":"3","MESSAGE":[]}`, 0, 0, 0, 1, 0},
+		{"byte out of range", `{"PRIORITY":"3","MESSAGE":[256]}`, 0, 0, 0, 1, 0},
+		{"fractional byte", `{"PRIORITY":"3","MESSAGE":[1.5]}`, 0, 0, 0, 1, 0},
+		{"multiple messages", `{"PRIORITY":"3","MESSAGE":["a","b"]}`, 0, 0, 0, 1, 0},
+		{"multiple binary messages", `{"PRIORITY":"3","MESSAGE":[[104],[105]]}`, 0, 0, 0, 1, 0},
+		{"lowercase key ignored", `{"PRIORITY":"3","message":"hello"}`, 0, 0, 0, 1, 0},
+		{"escaped key", `{"PRIORITY":"3","MESS\u0041GE":"hello"}`, 1, 0, 0, 0, 0},
+		{"last duplicate wins", `{"PRIORITY":"3","MESSAGE":"a","MESSAGE":null}`, 0, 0, 0, 1, 0},
+		{"nested keys ignored", `{"X":{"MESSAGE":"a","PRIORITY":"3"},"Y":["MESSAGE"]}`, 0, 0, 1, 0, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -63,7 +72,7 @@ func TestPriorityAndMessageFields(t *testing.T) {
 				t.Fatal(err)
 			}
 			if r.Records != 1 || r.Matched != tt.matched || r.Filtered != tt.filtered ||
-				r.Skipped.Priority != tt.priority || r.Skipped.Message != tt.message {
+				r.Skipped.Priority != tt.priority || r.Skipped.Message != tt.message || r.BinaryMessages != tt.binary {
 				t.Fatalf("%+v", r)
 			}
 		})
@@ -93,6 +102,26 @@ func TestOrderingAndLimit(t *testing.T) {
 	}
 }
 
+func TestBinaryMessages(t *testing.T) {
+	// journalctl writes this ANSI-coloured message as a byte array.
+	input := `{"PRIORITY":"3","MESSAGE":[27,91,51,49,109,102,97,105,108,27,91,48,109,9,255],"_SYSTEMD_UNIT":"a"}
+{"PRIORITY":"3","MESSAGE":[104,105],"_SYSTEMD_UNIT":"a"}
+{"PRIORITY":"3","MESSAGE":"hi","_SYSTEMD_UNIT":"a"}`
+	r, err := Summarize(strings.NewReader(input), 4, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Group{{"a", 3, "err", "hi", 2}, {"a", 3, "err", "\x1b[31mfail\x1b[0m\t\uFFFD", 1}}
+	if r.Matched != 3 || r.BinaryMessages != 2 || r.Skipped != (Skipped{}) || !reflect.DeepEqual(r.Groups, want) {
+		t.Fatalf("%+v", r)
+	}
+	got := Text(r)
+	if strings.ContainsAny(got, "\x1b\t") || !strings.Contains(got, `"\x1b[31mfail\x1b[0m\t\ufffd"`) ||
+		!strings.Contains(got, "Byte-array messages decoded: 2") {
+		t.Fatalf("unexpected text: %q", got)
+	}
+}
+
 func TestUnitFallbackAndExactGrouping(t *testing.T) {
 	input := `{"PRIORITY":3,"MESSAGE":"x","_SYSTEMD_UNIT":"svc","SYSLOG_IDENTIFIER":"ignored"}
 {"PRIORITY":3,"MESSAGE":"x","_SYSTEMD_UNIT":null,"SYSLOG_IDENTIFIER":"fallback"}
@@ -113,7 +142,8 @@ type brokenReader struct{}
 func (brokenReader) Read([]byte) (int, error) { return 0, errors.New("read failed") }
 
 func TestInputErrors(t *testing.T) {
-	for _, input := range []string{"[]", "null", "3", "true", `{bad}`, "{} {}", "{}\n[", "\xff", strings.Repeat("x", MaxLineBytes+1)} {
+	for _, input := range []string{"[]", "null", "3", "true", `"{}"`, `{bad}`, `{"a":1,}`, `{"a":}`, "{} {}", "{}\n[",
+		"\xff", `{"MESS\uZZZZ":1}`, strings.Repeat("x", MaxLineBytes+1)} {
 		r, err := Summarize(strings.NewReader(input), 4, 20)
 		if err == nil || r.Records != 0 {
 			t.Fatalf("expected error, got %+v, %v", r, err)

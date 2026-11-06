@@ -23,6 +23,7 @@ func TestRun(t *testing.T) {
 		{"stdin", []string{"-"}, `{"PRIORITY":"3","MESSAGE":"failed"}`, 0, "ERR", ""},
 		{"empty", []string{"-"}, "", 0, "0 matched / 0 records", ""},
 		{"skipped", []string{"-"}, `{}`, 1, "1 skipped", ""},
+		{"binary message", []string{"-"}, `{"PRIORITY":"3","MESSAGE":[104,105]}`, 0, "decoded: 1", ""},
 		{"malformed", []string{"-"}, "{}\n[", 3, "", "line 2"},
 		{"missing file", []string{"missing-file.jsonl"}, "", 3, "", "cannot open input"},
 		{"no argument", nil, "", 2, "", "usage:"},

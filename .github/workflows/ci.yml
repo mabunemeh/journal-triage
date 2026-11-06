@@ -31,6 +31,11 @@ jobs:
       - name: Test (Linux with race detector)
         if: runner.os == 'Linux'
         run: go test -race -count=1 -cover ./...
+      - name: Fuzz (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          go test -run '^$' -fuzz '^FuzzParseRecord$' -fuzztime 20s ./internal/triage
+          go test -run '^$' -fuzz '^FuzzSummarize$' -fuzztime 20s ./internal/triage
       - name: Test (Windows)
         if: runner.os == 'Windows'
         run: go test -count=1 -cover ./...

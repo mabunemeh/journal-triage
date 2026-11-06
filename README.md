@@ -79,8 +79,9 @@ Priorities: `0 emerg`, `1 alert`, `2 crit`, `3 err`, `4 warning`, `5 notice`,
 - Ordering is priority ascending, count descending, then unit and message.
 - Text output quotes log fields and escapes control characters and Unicode,
   so log content cannot inject terminal escape sequences into the report.
-- JSON has `schema_version: 1`, record accounting, omitted-group count, and a
-  `groups` array. Even an empty report uses `groups: []`.
+- JSON has `schema_version: 1`, record accounting (including
+  `binary_messages`), omitted-group count, and a `groups` array. Even an empty
+  report uses `groups: []`.
 
 ## Input limits and exit codes
 
@@ -90,11 +91,15 @@ JSON, journal export format, and binary `.journal` files are not supported.
 
 [journalctl's JSON format](https://www.freedesktop.org/software/systemd/man/latest/journalctl.html)
 can represent truncated fields as null, binary values as byte arrays, and
-repeated fields as arrays. This first version summarizes **text messages**.
-Missing or unsupported priorities are counted as skipped; matching records
-with missing, null, binary or multiple messages are also counted as skipped.
-Priority filtering happens before message validation. Skipped records are
-visible in both formats and cause exit 1; they never become invented messages.
+repeated fields as arrays. journalctl writes any message containing a tab, ANSI
+colour code or other control character as a byte array; these are decoded, with
+invalid UTF-8 replaced by U+FFFD, and counted as `binary_messages` in JSON and
+a `Byte-array messages decoded:` line in text. Missing or unsupported
+priorities are counted as skipped; matching records with missing, null, empty
+or multiple messages are also counted as skipped. Priority filtering happens
+before message validation. Skipped records are visible in both formats and
+cause exit 1; they never become invented messages. Field names match exactly,
+as journald defines them.
 
 | Exit | Meaning |
 | --- | --- |
@@ -115,10 +120,14 @@ exports separate because grouping does not include hostname or machine ID.
 go test -count=1 -cover ./...
 go vet ./...
 gofmt -w cmd internal
+go test -run '^$' -bench . ./internal/triage
+go test -run '^$' -fuzz FuzzParseRecord -fuzztime 1m ./internal/triage
 ```
 
-CI checks Linux and Windows, runs the race detector on Linux, lints the Go
-code, and scans for secrets. To enable local hooks, install `pre-commit` and
+`FuzzParseRecord` checks the single-pass field parser against a plain
+`encoding/json` map decoder; `FuzzSummarize` checks that every record is
+counted exactly once. CI checks Linux and Windows, runs the race detector and
+both fuzzers briefly on Linux, lints the Go code, and scans for secrets. To enable local hooks, install `pre-commit` and
 run `pre-commit install`; Go and Git Bash must be on PATH.
 
 Licensed under [Apache-2.0](LICENSE).

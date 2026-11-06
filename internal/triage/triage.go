@@ -40,9 +40,12 @@ type Report struct {
 	Matched       int     `json:"matched"`
 	Filtered      int     `json:"filtered"`
 	Skipped       Skipped `json:"skipped"`
-	TotalGroups   int     `json:"total_groups"`
-	OmittedGroups int     `json:"omitted_groups"`
-	Groups        []Group `json:"groups"`
+	// BinaryMessages counts matched records whose message journalctl wrote as
+	// a byte array, which it does for text containing control characters.
+	BinaryMessages int     `json:"binary_messages"`
+	TotalGroups    int     `json:"total_groups"`
+	OmittedGroups  int     `json:"omitted_groups"`
+	Groups         []Group `json:"groups"`
 }
 
 type key struct {
@@ -73,9 +76,26 @@ func text(raw json.RawMessage) (string, bool) {
 	return value, true
 }
 
-func unit(record map[string]json.RawMessage) string {
-	for _, field := range []string{"_SYSTEMD_UNIT", "SYSLOG_IDENTIFIER"} {
-		if value, ok := text(record[field]); ok && value != "" {
+// message accepts a JSON string or a non-empty array of bytes. journalctl uses
+// byte arrays for values that are not printable UTF-8, such as messages with
+// tabs or ANSI colour codes. Invalid UTF-8 is replaced with U+FFFD.
+func message(raw json.RawMessage) (value string, binary, ok bool) {
+	if value, ok := text(raw); ok {
+		return value, false, true
+	}
+	if len(raw) == 0 || raw[0] != '[' {
+		return "", false, false
+	}
+	var data []byte // Unmarshal rejects elements that are not integers 0..255.
+	if err := json.Unmarshal(raw, &data); err != nil || len(data) == 0 {
+		return "", false, false
+	}
+	return strings.ToValidUTF8(string(data), "\uFFFD"), true, true
+}
+
+func unit(fields record) string {
+	for _, raw := range []json.RawMessage{fields.unit, fields.identifier} {
+		if value, ok := text(raw); ok && value != "" {
 			return value
 		}
 	}
@@ -107,15 +127,12 @@ func Summarize(input io.Reader, maxPriority, limit int) (Report, error) {
 		if !utf8.Valid(data) {
 			return Report{}, fmt.Errorf("line %d: invalid UTF-8", line)
 		}
-		var record map[string]json.RawMessage
-		if err := json.Unmarshal(data, &record); err != nil {
-			return Report{}, fmt.Errorf("line %d: expected a JSON object: %w", line, err)
-		}
-		if record == nil {
-			return Report{}, fmt.Errorf("line %d: expected a JSON object", line)
+		fields, err := parseRecord(data)
+		if err != nil {
+			return Report{}, fmt.Errorf("line %d: %w", line, err)
 		}
 		report.Records++
-		level, ok := priority(record["PRIORITY"])
+		level, ok := priority(fields.priority)
 		if !ok {
 			report.Skipped.Priority++
 			continue
@@ -124,13 +141,16 @@ func Summarize(input io.Reader, maxPriority, limit int) (Report, error) {
 			report.Filtered++
 			continue
 		}
-		message, ok := text(record["MESSAGE"])
+		msg, binary, ok := message(fields.message)
 		if !ok {
 			report.Skipped.Message++
 			continue
 		}
+		if binary {
+			report.BinaryMessages++
+		}
 		report.Matched++
-		counts[key{unit(record), level, message}]++
+		counts[key{unit(fields), level, msg}]++
 	}
 	if err := scanner.Err(); err != nil {
 		return Report{}, fmt.Errorf("read input near line %d (maximum record size 8 MiB): %w", line+1, err)
@@ -172,6 +192,9 @@ func Text(report Report) string {
 	if report.Skipped.Priority+report.Skipped.Message > 0 {
 		lines = append(lines, fmt.Sprintf("Skipped: %d missing/unsupported priority; %d missing/non-text message",
 			report.Skipped.Priority, report.Skipped.Message))
+	}
+	if report.BinaryMessages > 0 {
+		lines = append(lines, fmt.Sprintf("Byte-array messages decoded: %d", report.BinaryMessages))
 	}
 	for _, group := range report.Groups {
 		lines = append(lines, fmt.Sprintf("%-7s %5dx %s %s", strings.ToUpper(group.Severity),
